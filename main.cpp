@@ -569,98 +569,108 @@ vector<Table> convertToBCNF(Table& baseTable) {
     return tablesBCNF;
 }
 
+// Convert to 4NF by normalizing tables returned from convertTo3NF
 vector<Table> convertTo4NF(Table& baseTable) {
-    vector<Table> result;
-    result.push_back(baseTable); // Start with the base table in the 4NF result set
+    // Get tables in 3NF
+    vector<Table> tables3NF = convertTo3NF(baseTable);
+    vector<Table> tables4NF;
 
-    // Analyze FDs to detect potential MVDs
-    for (const auto& fd : baseTable.FDs) {
-        // Parse the FD into left-hand side (LHS) and right-hand side (RHS)
-        string lhs = fd.substr(0, fd.find("->"));
-        string rhs = fd.substr(fd.find("->") + 2);
+    for (Table& table : tables3NF) {
+        // Start with the current 3NF table in the 4NF result set
+        tables4NF.push_back(table);
 
-        // Separate LHS and RHS attributes
-        vector<string> lhsAttrs = parseFD2(lhs);
-        vector<string> rhsAttrs = parseFD2(rhs);
+        // Analyze FDs to detect potential MVDs
+        for (const auto& fd : table.FDs) {
+            // Parse FD into left-hand side (LHS) and right-hand side (RHS)
+            string lhs = fd.substr(0, fd.find("->"));
+            string rhs = fd.substr(fd.find("->") + 2);
 
-        // Check if this FD behaves like an MVD by seeing if RHS can exist independently of other columns
-        bool isMVD = true;
-        for (const string& attr : baseTable.attributes) {
-            if (find(lhsAttrs.begin(), lhsAttrs.end(), attr) == lhsAttrs.end() &&
-                find(rhsAttrs.begin(), rhsAttrs.end(), attr) == rhsAttrs.end()) {
-                // If there's an attribute not in LHS or RHS that correlates with RHS values, it's not an MVD
-                if (!isFD(lhsAttrs, attr, baseTable.Content)) {
-                    isMVD = false;
-                    break;
+            // Separate LHS and RHS attributes
+            vector<string> lhsAttrs = parseFD2(lhs);
+            vector<string> rhsAttrs = parseFD2(rhs);
+
+            // Check if this FD behaves like an MVD by seeing if RHS can exist independently of other columns
+            bool isMVD = true;
+            for (const string& attr : table.attributes) {
+                if (find(lhsAttrs.begin(), lhsAttrs.end(), attr) == lhsAttrs.end() &&
+                    find(rhsAttrs.begin(), rhsAttrs.end(), attr) == rhsAttrs.end()) {
+                    // If there's an attribute not in LHS or RHS that correlates with RHS values, it's not an MVD
+                    if (!isFD(lhsAttrs, attr, table.Content)) {
+                        isMVD = false;
+                        break;
+                    }
                 }
             }
-        }
 
-        if (isMVD) {
-            // Construct a new table for the MVD
-            vector<string> newAttributes = lhsAttrs;
-            newAttributes.insert(newAttributes.end(), rhsAttrs.begin(), rhsAttrs.end());
+            if (isMVD) {
+                // Construct a new table for the MVD
+                vector<string> newAttributes = lhsAttrs;
+                newAttributes.insert(newAttributes.end(), rhsAttrs.begin(), rhsAttrs.end());
 
-            unordered_map<string, vector<string>> newData;
-            for (const string& attr : newAttributes) {
-                newData[attr] = baseTable.Content[attr];
+                unordered_map<string, vector<string>> newData;
+                for (const string& attr : newAttributes) {
+                    newData[attr] = table.Content[attr];
+                }
+
+                // Create the new MVD table
+                vector<string> emptyTypes(newAttributes.size(), "");
+                Table mvdTable(newAttributes, {}, lhsAttrs, newData, emptyTypes);
+                tables4NF.push_back(mvdTable);
+
+                // Remove RHS attributes from the original table to ensure no redundancy
+                EraseCols(table, rhsAttrs);
             }
-
-            // Assuming an empty vector for types, you might want to provide types as per your data
-            vector<string> emptyTypes(newAttributes.size(), "");
-            Table mvdTable(newAttributes, {}, lhsAttrs, newData, emptyTypes);
-            result.push_back(mvdTable);
-
-            // Remove RHS attributes from the base table to ensure no redundancy
-            EraseCols(baseTable, rhsAttrs);
         }
     }
 
-    return result;
+    return tables4NF;
 }
 
-// Decompose to 5NF by separating each non-trivial join dependency
+// Convert to 5NF by normalizing tables returned from convertTo4NF
 vector<Table> convertTo5NF(Table& baseTable, const vector<vector<string>>& joinDependencies) {
-    vector<Table> newTables;
-    unordered_map<string, vector<string>> data = baseTable.Content;
+    // Get tables in 4NF
+    vector<Table> tables4NF = convertTo4NF(baseTable);
+    vector<Table> tables5NF;
 
-    for (const auto& jd : joinDependencies) {
-        if (hasJoinDependency(jd, baseTable.keys, data)) {
-            vector<string> jdAttributes = jd;
-            unordered_map<string, vector<string>> jdData;
+    for (Table& table : tables4NF) {
+        unordered_map<string, vector<string>> data = table.Content;
 
-            // Create data projections for this join dependency
-            for (const auto& attr : jdAttributes) {
-                if (data.find(attr) != data.end()) {
-                    jdData[attr] = data[attr];
+        for (const auto& jd : joinDependencies) {
+            if (hasJoinDependency(jd, table.keys, data)) {
+                vector<string> jdAttributes = jd;
+                unordered_map<string, vector<string>> jdData;
+
+                // Create data projections for this join dependency
+                for (const auto& attr : jdAttributes) {
+                    if (data.find(attr) != data.end()) {
+                        jdData[attr] = data[attr];
+                    }
                 }
-            }
 
-            // Remove join dependency attributes from the base table
-            for (const auto& attr : jdAttributes) {
-                data.erase(attr);
-            }
+                // Remove join dependency attributes from the base table
+                for (const auto& attr : jdAttributes) {
+                    data.erase(attr);
+                }
 
-            // Create new table from join dependency projection
-            Table newTable(jdAttributes, {}, baseTable.keys, jdData, {});
-            newTables.push_back(newTable);
+                // Create new table from join dependency projection
+                Table newTable(jdAttributes, {}, table.keys, jdData, {});
+                tables5NF.push_back(newTable);
+            }
+        }
+
+        // Add the remaining base table if attributes remain after decomposition
+        if (!data.empty()) {
+            vector<string> remainingAttributes;
+            for (const auto& [attr, values] : data) {
+                remainingAttributes.push_back(attr);
+            }
+            Table remainingTable(remainingAttributes, {}, table.keys, data, {});
+            tables5NF.push_back(remainingTable);
         }
     }
 
-    // Add remaining base table if attributes remain
-    if (!data.empty()) {
-        vector<string> remainingAttributes;
-        for (const auto& [attr, values] : data) {
-            remainingAttributes.push_back(attr);
-        }
-        Table remainingTable(remainingAttributes, {}, baseTable.keys, data, {});
-        newTables.push_back(remainingTable);
-    }
-
-    return newTables;
+    return tables5NF;
 }
-
-
 
 bool isIn1nf(Table inputTable)
 {

@@ -329,7 +329,7 @@ vector<Table> convertTo1NF(Table& baseTable) {
     vector<Table> newTables;
     vector<string> multivaluedAttributes;
 
-    // Find multivalued attributes (those with values inside brackets)
+    // Identify multivalued attributes by checking for values in brackets
     for (const string& attr : baseTable.attributes) {
         for (const string& value : baseTable.Content[attr]) {
             if (value.front() == '[' && value.back() == ']') {
@@ -341,6 +341,7 @@ vector<Table> convertTo1NF(Table& baseTable) {
 
     // Create new tables for each multivalued attribute
     for (const string& mvAttr : multivaluedAttributes) {
+        // Set up new attributes with keys and the multivalued attribute
         vector<string> newAttributes = baseTable.keys;
         newAttributes.push_back(mvAttr);
 
@@ -349,13 +350,14 @@ vector<Table> convertTo1NF(Table& baseTable) {
             newData[key] = baseTable.Content[key];  // Copy key columns
         }
 
-        newData[mvAttr] = {};  // Initialize the multivalued column
+        // Initialize the multivalued column
+        newData[mvAttr] = {};
 
-        for (size_t i = 0; i < baseTable.Content[mvAttr].size(); ++i) {
-            string mvValue = baseTable.Content[mvAttr][i];
+        // Process and flatten the multivalued entries
+        for (const string& mvValue : baseTable.Content[mvAttr]) {
             if (mvValue.front() == '[' && mvValue.back() == ']') {
-                mvValue = mvValue.substr(1, mvValue.size() - 2);  // Remove brackets
-                stringstream ss(mvValue);
+                // Remove brackets and split by comma
+                stringstream ss(mvValue.substr(1, mvValue.size() - 2));
                 string token;
                 while (getline(ss, token, ',')) {
                     newData[mvAttr].push_back(token);
@@ -363,21 +365,21 @@ vector<Table> convertTo1NF(Table& baseTable) {
             }
         }
 
-        // Ensure types are synchronized with the newAttributes
+        // Synchronize types for each attribute in newAttributes
         vector<string> newTypes;
-        for (const string& attr : baseTable.keys) {
-            // Find the corresponding type for each key attribute
+        for (const string& attr : newAttributes) {
+            // If attr is a key, get its type from baseTable
             auto it = find(baseTable.attributes.begin(), baseTable.attributes.end(), attr);
             if (it != baseTable.attributes.end()) {
                 size_t index = distance(baseTable.attributes.begin(), it);
                 newTypes.push_back(baseTable.DataType[index]);
+            } else if (attr == mvAttr) {
+                // For the multivalued attribute, assign VARCHAR(255) as default
+                newTypes.push_back("VARCHAR(255)");
             }
         }
 
-        // Add type for the multivalued attribute (assuming it is a string for now)
-        newTypes.push_back("VARCHAR(255)");  // Assuming the multivalued attribute is a string
-
-        // Create the new table
+        // Create the new table with aligned attributes and types
         Table newTable(newAttributes, {}, baseTable.keys, newData, newTypes);
         newTables.push_back(newTable);
     }
@@ -387,6 +389,7 @@ vector<Table> convertTo1NF(Table& baseTable) {
 
     return newTables;
 }
+
 
 vector<Table> convertTo2NF(Table& baseTable) {
     // First normalize to 1NF
